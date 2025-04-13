@@ -17,25 +17,23 @@ const pyqsFirebaseConfig = {
 };
 
 const timetableFirebaseConfig = {
-    apiKey: "AIzaSyAfDH13V2ArefPXcGmenKnu76b74vfzTvk",
-    authDomain: "timetable-91797.firebaseapp.com",
-    databaseURL: "https://timetable-91797-default-rtdb.firebaseio.com",
-    projectId: "timetable-91797",
-    storageBucket: "timetable-91797.firebasestorage.app",
-    messagingSenderId: "1061503018666",
-    appId: "1:1061503018666:web:736f540f7f3bfcddbbd2d3",
-    measurementId: "G-Q4GEHSZKCS"
+    apiKey: "AIzaSyAYZZ6Q28NficFdkbpnPfpVfWP43Nf64C0",
+    authDomain: "timetable-optimisation.firebaseapp.com",
+    projectId: "timetable-optimisation",
+    storageBucket: "timetable-optimisation.firebasestorage.app",
+    messagingSenderId: "1061641561731",
+    appId: "1:1061641561731:web:c1e913966969a575945db6",
+    measurementId: "G-RZW84S6MY0"
 };
 
 const classroomFirebaseConfig = {
-    apiKey: "AIzaSyA3j0lWYd_ZPpz_YnmuyyJzCYCSG1iiNqA",
-    authDomain: "classroom-f5017.firebaseapp.com",
-    databaseURL: "https://classroom-f5017-default-rtdb.firebaseio.com",
-    projectId: "classroom-f5017",
-    storageBucket: "classroom-f5017.firebasestorage.app",
-    messagingSenderId: "90878288175",
-    appId: "1:90878288175:web:83a433b57f45dcc4ea01da",
-    measurementId: "G-R683V922Z6"
+    apiKey: "AIzaSyB5ziwXCTqEBqbkBXIsBqX0KybhOMXCfzI",
+    authDomain: "classroom-avail.firebaseapp.com",
+    projectId: "classroom-avail",
+    storageBucket: "classroom-avail.firebasestorage.app",
+    messagingSenderId: "524230184818",
+    appId: "1:524230184818:web:5009c3cb5c56be526397eb",
+    measurementId: "G-WXER9J13QD"
 };
 
 // Constants
@@ -700,21 +698,22 @@ const center = { lat: 23.2599, lng: 77.4126 }; // Default location (Bhopal, MP)
 const CampusNavigation = () => {
     const [currentLocation, setCurrentLocation] = useState(null);
     const [autocomplete, setAutocomplete] = useState(null);
-    const [destination, setDestination] = useState(null);
-    const [directionsResponse, setDirectionsResponse] = useState(null);
+    const [mapRef, setMapRef] = useState(null);
+    const [markerPosition, setMarkerPosition] = useState(null);
     const [reviews, setReviews] = useState([]);
     const [newReview, setNewReview] = useState("");
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Fetch user's real-time location
         if (navigator.geolocation) {
             navigator.geolocation.watchPosition(
                 (position) => {
-                    setCurrentLocation({
+                    const loc = {
                         lat: position.coords.latitude,
                         lng: position.coords.longitude,
-                    });
+                    };
+                    setCurrentLocation(loc);
+                    setMarkerPosition(loc);
                     setLoading(false);
                 },
                 (error) => {
@@ -728,7 +727,6 @@ const CampusNavigation = () => {
             setLoading(false);
         }
 
-        // Fetch reviews from Firebase
         const dbRef = ref(pyqsDb, "reviews");
         get(dbRef).then((snapshot) => {
             if (snapshot.exists()) {
@@ -736,7 +734,6 @@ const CampusNavigation = () => {
             }
         });
     }, []);
-
 
     const handleReviewSubmit = () => {
         if (!newReview.trim()) return;
@@ -747,23 +744,68 @@ const CampusNavigation = () => {
         setNewReview("");
     };
 
+    const handlePlaceChanged = () => {
+        if (autocomplete !== null) {
+            const place = autocomplete.getPlace();
+            const location = place.geometry?.location;
+
+            if (location) {
+                const latLng = {
+                    lat: location.lat(),
+                    lng: location.lng()
+                };
+                setMarkerPosition(latLng);
+                mapRef?.panTo(latLng);
+            }
+        }
+    };
+
     return (
         <div>
-            <h1 className="text-3xl font-bold text-center text-gray-800 mb-8">
+            <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
                 Campus Navigation
             </h1>
             <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
-                <LoadScript googleMapsApiKey="AIzaSyBrSircR1wj64vlxP2XCe_IHfyobjYrnCM">
+                <LoadScript
+                    googleMapsApiKey="AIzaSyBrSircR1wj64vlxP2XCe_IHfyobjYrnCM"
+                    libraries={["places"]}
+                >
+                    <div className="mb-4">
+                        <Autocomplete
+                            onLoad={(auto) => setAutocomplete(auto)}
+                            onPlaceChanged={handlePlaceChanged}
+                        >
+                            <input
+                                type="text"
+                                placeholder="Search for stores, buildings..."
+                                className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                            />
+                        </Autocomplete>
+                    </div>
+
                     <GoogleMap
-                        mapContainerStyle={mapContainerStyle}
-                        center={currentLocation || center}
-                        zoom={15}
-                    >
-                        {currentLocation && <Marker position={currentLocation} />}
-                    </GoogleMap>
+  mapContainerStyle={mapContainerStyle}
+  center={markerPosition || currentLocation || center}
+  zoom={17}
+  onLoad={(map) => setMapRef(map)}
+>
+  {/* Blue dot for user's current location */}
+  {currentLocation && (
+    <Marker
+      position={currentLocation}
+      icon="http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
+    />
+  )}
+
+  {/* Red marker for searched destination */}
+  {markerPosition && (
+    <Marker position={markerPosition} />
+  )}
+</GoogleMap>
+
                 </LoadScript>
 
-                {/* Review Section */}
+                {/* Reviews */}
                 <div className="mt-6">
                     <h2 className="text-xl font-semibold text-gray-800 mb-2">Reviews</h2>
                     <textarea
