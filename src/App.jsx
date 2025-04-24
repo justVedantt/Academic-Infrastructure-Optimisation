@@ -693,71 +693,170 @@ const mapContainerStyle = {
     height: "500px",
 };
 
-const center = { lat: 23.2599, lng: 77.4126 }; // Default location (Bhopal, MP)
-
 const CampusNavigation = () => {
     const [currentLocation, setCurrentLocation] = useState(null);
+    const [destination, setDestination] = useState(null);
     const [autocomplete, setAutocomplete] = useState(null);
     const [mapRef, setMapRef] = useState(null);
-    const [markerPosition, setMarkerPosition] = useState(null);
+    const [directionsResponse, setDirectionsResponse] = useState(null);
+    const [travelTime, setTravelTime] = useState(null);
     const [reviews, setReviews] = useState([]);
     const [newReview, setNewReview] = useState("");
-    const [loading, setLoading] = useState(true);
+    const [reviewLocation, setReviewLocation] = useState("");
+    const [isLoaded, setIsLoaded] = useState(false);
 
+    // Get current location immediately when component mounts
     useEffect(() => {
         if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(
+            navigator.geolocation.getCurrentPosition(
                 (position) => {
                     const loc = {
                         lat: position.coords.latitude,
                         lng: position.coords.longitude,
                     };
                     setCurrentLocation(loc);
-                    setMarkerPosition(loc);
-                    setLoading(false);
+                    
+                    // If map is already loaded, center it on current location
+                    if (mapRef) {
+                        mapRef.panTo(loc);
+                        mapRef.setZoom(17);
+                    }
                 },
                 (error) => {
                     console.error("Geolocation error:", error);
-                    setLoading(false);
+                    // Default to Bhopal coordinates if geolocation fails
+                    setCurrentLocation({ lat: 23.2599, lng: 77.4126 });
                 },
-                { enableHighAccuracy: true }
+                { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
             );
         } else {
             console.error("Geolocation not supported.");
-            setLoading(false);
+            setCurrentLocation({ lat: 23.2599, lng: 77.4126 });
         }
 
+        // Load reviews from Firebase
         const dbRef = ref(pyqsDb, "reviews");
         get(dbRef).then((snapshot) => {
             if (snapshot.exists()) {
-                setReviews(Object.values(snapshot.val()));
+                const reviewsData = [];
+                snapshot.forEach((childSnapshot) => {
+                    reviewsData.push({
+                        id: childSnapshot.key,
+                        ...childSnapshot.val()
+                    });
+                });
+                setReviews(reviewsData);
             }
+        }).catch(err => {
+            console.error("Error loading reviews:", err);
         });
-    }, []);
+    }, [mapRef]);
 
-    const handleReviewSubmit = () => {
-        if (!newReview.trim()) return;
-
-        const dbRef = ref(pyqsDb, "reviews");
-        push(dbRef, newReview);
-        setReviews([...reviews, newReview]);
-        setNewReview("");
-    };
-
+    // Handle place selection from autocomplete
     const handlePlaceChanged = () => {
-        if (autocomplete !== null) {
+        if (autocomplete) {
             const place = autocomplete.getPlace();
-            const location = place.geometry?.location;
 
-            if (location) {
-                const latLng = {
-                    lat: location.lat(),
-                    lng: location.lng()
-                };
-                setMarkerPosition(latLng);
-                mapRef?.panTo(latLng);
+            if (!place.geometry || !place.geometry.location) {
+                console.error("No location details available for this place");
+                return;
+            }
+
+            const location = {
+                lat: place.geometry.location.lat(),
+                lng: place.geometry.location.lng()
+            };
+
+            setDestination(location);
+
+            if (mapRef) {
+                mapRef.panTo(location);
+                mapRef.setZoom(17);
+            }
+
+            // Calculate route if we have current location
+            if (currentLocation) {
+                calculateRoute(currentLocation, location);
             }
         }
+    };
+
+    // Calculate route between two points
+    const calculateRoute = async (origin, dest) => {
+        if (!window.google || !origin || !dest) {
+            console.error("Google Maps API or coordinates not available");
+            return;
+        }
+
+        try {
+            const directionsService = new window.google.maps.DirectionsService();
+            const results = await directionsService.route({
+                origin: origin,
+                destination: dest,
+                travelMode: window.google.maps.TravelMode.WALKING,
+            });
+
+            setDirectionsResponse(results);
+
+            if (results.routes[0] && results.routes[0].legs[0]) {
+                const leg = results.routes[0].legs[0];
+                setTravelTime(`${leg.duration.text} (${leg.distance.text})`);
+            }
+        } catch (error) {
+            console.error("Directions request failed:", error);
+        }
+    };
+
+    // Submit a new review
+    const handleReviewSubmit = () => {
+        if (!newReview.trim() || !reviewLocation.trim()) {
+            alert("Please enter both a location and review");
+            return;
+        }
+
+        const reviewData = {
+            location: reviewLocation,
+            comment: newReview,
+            timestamp: new Date().toISOString(),
+        };
+
+        const dbRef = ref(pyqsDb, "reviews");
+        push(dbRef, reviewData)
+            .then(() => {
+                setReviews([...reviews, reviewData]);
+                setNewReview("");
+                setReviewLocation("");
+                alert("Review submitted successfully!");
+            })
+            .catch((error) => {
+                console.error("Error adding review:", error);
+                alert("Failed to submit review. Please try again.");
+            });
+    };
+
+    // Map loading handler
+    const handleMapLoad = (map) => {
+        setMapRef(map);
+        setIsLoaded(true);
+        
+        // If current location is already available, center the map
+        if (currentLocation) {
+            map.panTo(currentLocation);
+            map.setZoom(17);
+        }
+    };
+
+    // Create a blue dot SVG for current location
+    const createLocationDot = () => {
+        return {
+            url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="8" stroke="#ffffff" stroke-width="2" fill="#4285F4" />
+                </svg>
+            `),
+            scaledSize: window.google && window.google.maps ? new window.google.maps.Size(24, 24) : null,
+            anchor: window.google && window.google.maps ? new window.google.maps.Point(12, 12) : null,
+        };
     };
 
     return (
@@ -777,56 +876,112 @@ const CampusNavigation = () => {
                         >
                             <input
                                 type="text"
-                                placeholder="Search for stores, buildings..."
-                                className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Search for buildings, shops, or locations..."
+                                className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                             />
                         </Autocomplete>
                     </div>
 
-                    <GoogleMap
-  mapContainerStyle={mapContainerStyle}
-  center={markerPosition || currentLocation || center}
-  zoom={17}
-  onLoad={(map) => setMapRef(map)}
->
-  {/* Blue dot for user's current location */}
-  {currentLocation && (
-    <Marker
-      position={currentLocation}
-      icon="http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-    />
-  )}
+                    <div className="relative">
+                        <GoogleMap
+                            mapContainerStyle={{ width: "100%", height: "500px" }}
+                            center={currentLocation || { lat: 23.2599, lng: 77.4126 }}
+                            zoom={17}
+                            onLoad={handleMapLoad}
+                            options={{
+                                zoomControl: true,
+                                mapTypeControl: true,
+                                streetViewControl: true,
+                                fullscreenControl: true,
+                            }}
+                        >
+                            {currentLocation && window.google && (
+                                <Marker
+                                    position={currentLocation}
+                                    icon={createLocationDot()}
+                                    title="Your Location"
+                                    zIndex={1000}
+                                />
+                            )}
 
-  {/* Red marker for searched destination */}
-  {markerPosition && (
-    <Marker position={markerPosition} />
-  )}
-</GoogleMap>
+                            {destination && (
+                                <Marker
+                                    position={destination}
+                                    animation={window.google?.maps?.Animation?.DROP}
+                                />
+                            )}
 
+                            {directionsResponse && (
+                                <DirectionsRenderer
+                                    directions={directionsResponse}
+                                    options={{
+                                        polylineOptions: {
+                                            strokeColor: "#4285F4",
+                                            strokeWeight: 5,
+                                        },
+                                    }}
+                                />
+                            )}
+                        </GoogleMap>
+
+                        {!isLoaded && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-60">
+                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                            </div>
+                        )}
+                    </div>
                 </LoadScript>
 
-                {/* Reviews */}
-                <div className="mt-6">
-                    <h2 className="text-xl font-semibold text-gray-800 mb-2">Reviews</h2>
-                    <textarea
-                        className="w-full p-2 border rounded-md"
-                        placeholder="Write your review..."
-                        value={newReview}
-                        onChange={(e) => setNewReview(e.target.value)}
-                    ></textarea>
-                    <button
-                        onClick={handleReviewSubmit}
-                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 mt-2"
-                    >
-                        Submit Review
-                    </button>
+                {travelTime && (
+                    <div className="mt-4 bg-blue-50 p-3 rounded-md text-blue-800 font-medium">
+                        <span className="font-bold">Estimated Travel Time:</span> {travelTime}
+                    </div>
+                )}
 
-                    <div className="mt-4 space-y-2">
-                        {reviews.map((review, index) => (
-                            <div key={index} className="p-3 bg-gray-100 rounded-md">
-                                {review}
-                            </div>
-                        ))}
+                <div className="mt-8 border-t pt-6">
+                    <h2 className="text-2xl font-semibold text-gray-800 mb-4">Location Reviews</h2>
+
+                    <div className="bg-gray-50 p-4 rounded-md mb-6">
+                        <h3 className="text-lg font-medium text-gray-700 mb-2">Add a Review</h3>
+                        <input
+                            type="text"
+                            className="w-full p-2 border rounded-md mb-2"
+                            placeholder="Location name (e.g., Cafe, Library, etc.)"
+                            value={reviewLocation}
+                            onChange={(e) => setReviewLocation(e.target.value)}
+                        />
+                        <textarea
+                            className="w-full p-2 border rounded-md mb-2"
+                            rows="3"
+                            placeholder="Write your review..."
+                            value={newReview}
+                            onChange={(e) => setNewReview(e.target.value)}
+                        ></textarea>
+                        <button
+                            onClick={handleReviewSubmit}
+                            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                        >
+                            Submit Review
+                        </button>
+                    </div>
+
+                    <div className="space-y-3">
+                        <h3 className="text-lg font-medium text-gray-700 mb-2">Recent Reviews</h3>
+                        {reviews.length === 0 ? (
+                            <p className="text-gray-500 italic">No reviews yet. Be the first to add one!</p>
+                        ) : (
+                            reviews.map((review, index) => (
+                                <div key={index} className="p-4 bg-white border border-gray-200 rounded-md shadow-sm">
+                                    <h4 className="font-medium text-blue-700">{review.location}</h4>
+                                    <p className="text-gray-700 mt-1">{review.comment}</p>
+                                    {review.timestamp && (
+                                        <p className="text-xs text-gray-500 mt-2">
+                                            {new Date(review.timestamp).toLocaleDateString()}
+                                        </p>
+                                    )}
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             </div>
